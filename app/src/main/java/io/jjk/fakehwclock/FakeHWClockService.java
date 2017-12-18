@@ -86,6 +86,9 @@ public class FakeHWClockService extends Service {
                 Log.e(TAG, command);
                 String result = RootCmdRunner.execute(command);
                 Log.e("RootCmdRunner", result);
+
+                String actionString = "io.jjk.fakehwclock.CLOCK_UPDATED";
+                sendBroadcast(new Intent(actionString));
             } else {
                 Log.e(TAG, "System time currently more update to date, no need to use FakeHWClock.");
             }
