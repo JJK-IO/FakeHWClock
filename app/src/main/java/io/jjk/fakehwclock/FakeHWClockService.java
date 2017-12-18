@@ -35,8 +35,8 @@ public class FakeHWClockService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        Log.e(TAG, "here");
-
+        /* Set an runnable to save the current clock time to fake hardware clock time only if the
+            software clock is newer than the fake hardware clock time. */
         mHandler = new Handler();
         Runnable mRunnable = new Runnable() {
             @Override
@@ -44,30 +44,35 @@ public class FakeHWClockService extends Service {
                 Calendar currentTime = Calendar.getInstance();
                 File sdCard = Environment.getExternalStorageDirectory();
                 File file = new File(sdCard, "hwclock");
-                try {
-                    FileWriter f = new FileWriter(file);
-                    Log.v(TAG, "Saving time: " + currentTime.getTimeInMillis());
-                    f.write("" + currentTime.getTimeInMillis());
-                    f.flush();
-                    f.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
+                if (!fakeHWClockNewer(file)) {
+                    try {
+                        FileWriter f = new FileWriter(file);
+                        Log.v(TAG, "Saving time: " + currentTime.getTimeInMillis());
+                        f.write("" + currentTime.getTimeInMillis());
+                        f.flush();
+                        f.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
                 mHandler.postDelayed(this, secondsToUpdate * 1000);
             }
         };
-
         mHandler.post(mRunnable);
 
-        File sdCard = Environment.getExternalStorageDirectory();
-        File file = new File(sdCard, "hwclock");
         try {
-            String unixTime = getStringFromFile(file.getPath()).trim();
-            Calendar currentTime = Calendar.getInstance();
-            Calendar cal = Calendar.getInstance();
-            cal.setTimeInMillis(Long.valueOf(unixTime));
+            File sdCard = Environment.getExternalStorageDirectory();
+            File file = new File(sdCard, "hwclock");
 
-            if (currentTime.getTimeInMillis() < cal.getTimeInMillis()) {
+            /* Only update software clock if the fake hardware clock has a newer time.
+                IE. Hasn't/can't pull date from ntp service. */
+            if (fakeHWClockNewer(file)) {
+                // Get fake hardware clock as Calendar object
+                String unixTime = getStringFromFile(file.getPath()).trim();
+                Calendar cal = Calendar.getInstance();
+                cal.setTimeInMillis(Long.valueOf(unixTime));
+
+                // Get the fake hardware clock in required format.
                 String year = String.valueOf(cal.get(Calendar.YEAR));
                 String month = String.valueOf(cal.get(Calendar.MONTH) + 1);
                 String day = String.valueOf(cal.get(Calendar.DAY_OF_MONTH));
@@ -75,6 +80,8 @@ public class FakeHWClockService extends Service {
                 String minute = String.valueOf(cal.get(Calendar.MINUTE));
                 String second = String.valueOf(cal.get(Calendar.SECOND));
                 String dateString = year + month + day + "." + hour + minute + second;
+
+                // Set the software clock to fake hardware clock time.
                 String command = "date -s " + dateString;
                 Log.e(TAG, command);
                 String result = RootCmdRunner.execute(command);
@@ -86,6 +93,22 @@ public class FakeHWClockService extends Service {
             e.printStackTrace();
         } catch (InterruptedException e) {
             e.printStackTrace();
+        } catch (NumberFormatException e) {
+            e.printStackTrace();
+            Log.e(TAG, "There was an issue parsing the unix time from hwclock file.");
+        }
+    }
+
+    public static boolean fakeHWClockNewer(File f) {
+        try {
+            String unixTime = getStringFromFile(f.getPath()).trim();
+            Calendar currentTime = Calendar.getInstance();
+            Calendar hwClock = Calendar.getInstance();
+            hwClock.setTimeInMillis(Long.valueOf(unixTime));
+
+            return hwClock.getTimeInMillis() > currentTime.getTimeInMillis();
+        } catch (IOException e) {
+            return false;
         }
     }
 
