@@ -87,6 +87,7 @@ public class FakeHWClockService extends Service {
                 String result = RootCmdRunner.execute(command);
                 Log.e("RootCmdRunner", result);
 
+                // Send an intent when the fake hardware clock has updated.
                 String actionString = "io.jjk.fakehwclock.CLOCK_UPDATED";
                 sendBroadcast(new Intent(actionString));
             } else {
