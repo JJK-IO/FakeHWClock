@@ -2,6 +2,7 @@ package io.jjk.fakehwclock;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.AsyncTask;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
@@ -15,8 +16,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Calendar;
+import java.util.List;
 
-import io.jjk.fakehwclock.shell.RootCmdRunner;
+import io.jjk.fakehwclock.shell.Shell;
 
 public class FakeHWClockService extends Service {
     private String TAG = "FakeHWClockService";
@@ -44,63 +46,62 @@ public class FakeHWClockService extends Service {
                 Calendar currentTime = Calendar.getInstance();
                 File sdCard = Environment.getExternalStorageDirectory();
                 File file = new File(sdCard, "hwclock");
+                Log.d(TAG, "Checking hwclock file...");
                 if (!fakeHWClockNewer(file)) {
                     try {
+                        Log.d(TAG, "hwclock file older the current time, updating hwclock file");
                         FileWriter f = new FileWriter(file);
                         Log.v(TAG, "Saving time: " + currentTime.getTimeInMillis());
                         f.write("" + currentTime.getTimeInMillis());
                         f.flush();
                         f.close();
+                        Log.d(TAG, "hwclock file updated...");
                     } catch (IOException e) {
                         e.printStackTrace();
+                    }
+                } else {
+                    Log.d(TAG, "hwclock file newer than current time, updating system time.");
+                    try {
+                        // Get fake hardware clock as Calendar object
+                        String unixTime = getStringFromFile(file.getPath()).trim();
+                        Calendar cal = Calendar.getInstance();
+                        cal.setTimeInMillis(Long.valueOf(unixTime));
+
+                        // Get the fake hardware clock in required format.
+                        String year = String.valueOf(cal.get(Calendar.YEAR));
+                        String month = String.valueOf(cal.get(Calendar.MONTH) + 1);
+                        String day = String.valueOf(cal.get(Calendar.DAY_OF_MONTH));
+                        String hour = String.valueOf(cal.get(Calendar.HOUR_OF_DAY));
+                        String minute = String.valueOf(cal.get(Calendar.MINUTE));
+                        String second = String.valueOf(cal.get(Calendar.SECOND));
+                        String dateString = year + month + day + "." + hour + minute + second;
+
+                        // Set the software clock to fake hardware clock time.
+                        String command1 = "busybox date -s @" + String.valueOf(Long.valueOf(unixTime) / 1000);
+                        String command2 = "date -s " + dateString;
+                        String broadcastTimeSetCommand = "am broadcast -a android.intent.action.TIME_SET";
+                        Log.d(TAG, command1);
+                        new RootCommandRunner().execute(command1);
+                        Log.d(TAG, command2);
+                        new RootCommandRunner().execute(command2);
+                        Log.d(TAG, broadcastTimeSetCommand);
+                        new RootCommandRunner().execute(broadcastTimeSetCommand);
+
+                        // Send an intent when the fake hardware clock has updated.
+                        String actionString = "io.jjk.fakehwclock.CLOCK_UPDATED";
+                        sendBroadcast(new Intent(actionString));
+                        Log.d(TAG, "system time updated.");
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } catch (NumberFormatException e) {
+                        e.printStackTrace();
+                        Log.e(TAG, "There was an issue parsing the unix time from hwclock file.");
                     }
                 }
                 mHandler.postDelayed(this, secondsToUpdate * 1000);
             }
         };
         mHandler.post(mRunnable);
-
-        try {
-            File sdCard = Environment.getExternalStorageDirectory();
-            File file = new File(sdCard, "hwclock");
-
-            /* Only update software clock if the fake hardware clock has a newer time.
-                IE. Hasn't/can't pull date from ntp service. */
-            if (fakeHWClockNewer(file)) {
-                // Get fake hardware clock as Calendar object
-                String unixTime = getStringFromFile(file.getPath()).trim();
-                Calendar cal = Calendar.getInstance();
-                cal.setTimeInMillis(Long.valueOf(unixTime));
-
-                // Get the fake hardware clock in required format.
-                String year = String.valueOf(cal.get(Calendar.YEAR));
-                String month = String.valueOf(cal.get(Calendar.MONTH) + 1);
-                String day = String.valueOf(cal.get(Calendar.DAY_OF_MONTH));
-                String hour = String.valueOf(cal.get(Calendar.HOUR_OF_DAY));
-                String minute = String.valueOf(cal.get(Calendar.MINUTE));
-                String second = String.valueOf(cal.get(Calendar.SECOND));
-                String dateString = year + month + day + "." + hour + minute + second;
-
-                // Set the software clock to fake hardware clock time.
-                String command = "date -s " + dateString;
-                Log.e(TAG, command);
-                String result = RootCmdRunner.execute(command);
-                Log.e("RootCmdRunner", result);
-
-                // Send an intent when the fake hardware clock has updated.
-                String actionString = "io.jjk.fakehwclock.CLOCK_UPDATED";
-                sendBroadcast(new Intent(actionString));
-            } else {
-                Log.e(TAG, "System time currently more update to date, no need to use FakeHWClock.");
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } catch (NumberFormatException e) {
-            e.printStackTrace();
-            Log.e(TAG, "There was an issue parsing the unix time from hwclock file.");
-        }
     }
 
     public static boolean fakeHWClockNewer(File f) {
@@ -134,5 +135,21 @@ public class FakeHWClockService extends Service {
         //Make sure you close all streams.
         fin.close();
         return ret;
+    }
+
+    static private class RootCommandRunner extends AsyncTask<String, Void, Void> {
+        protected Void doInBackground(String... command) {
+            List<String> result = Shell.SU.run(command);
+            for (String s : result) {
+                Log.d("RootCmdRunner", s);
+            }
+            return null;
+        }
+    }
+
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
     }
 }
